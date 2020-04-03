@@ -1,0 +1,11 @@
+[package]
+name = "finarc"
+version = "0.1.0"
+authors = ["Alexey Gerasimov <lokomot476@gmail.com>"]
+description = "Arc with finalizer called once last clone is dropped"
+keywords = ["arc", "finalization", "callback"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/fan-tom/finarc"
+edition = "2018"
+
+[dependencies]
