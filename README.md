@@ -1,3 +1,6 @@
+[![API Docs](https://docs.rs/finarc/badge.svg)](https://docs.rs/finarc)
+[![Downloads](https://img.shields.io/crates/d/finarc.svg)](https://crates.io/crates/finarc)
+
 This crate provides type FinArc, which is Arc with finalizer callback, that
 clones inner data on cloning and calls finalizer when last instance is dropped
 
