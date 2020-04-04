@@ -1,5 +1,7 @@
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
+use std::ptr;
+use std::mem;
 
 /// This crate provides type FinArc, which is Arc with finalizer callback, that
 /// clones inner data on cloning and calls finalizer when last instance is dropped
@@ -30,6 +32,46 @@ where
     // Arc<Option<T>> has smaller footprint than Option<Arc<T>> if T can be all-zeros, but FnOnce is not that case
     inner: Option<Arc<F>>,
     data: T,
+}
+
+impl<T, F> FinArc<T, F>
+    where F: FnOnce(&mut T)
+{
+    /// Returns the contained value, if this is the last instance of FinArc, without running finalizer
+    ///
+    /// Otherwise, an [`Err`][result] is returned with the same `FinArc` that was
+    /// passed in.
+    ///
+    /// [result]: ../../std/result/enum.Result.html
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use finarc::FinArc;
+    ///
+    /// let x = FinArc::new(3, |_|{});
+    /// assert_eq!(FinArc::try_unwrap(x), Ok(3));
+    ///
+    /// let x = FinArc::new(4, |_|{});
+    /// let _y = FinArc::clone(&x);
+    /// assert_eq!(*FinArc::try_unwrap(x).unwrap_err(), 4);
+    /// ```
+    /// Analogue of `Arc::try_unwrap`
+    pub fn try_unwrap(mut this: Self) -> Result<T, Self> {
+        match Arc::try_unwrap(this.inner.take().expect("Finalizer is gone")) {
+            Ok(_) => unsafe {
+                // we cannot simply move out of FinArc, because it has custom impl of Drop
+                let data = ptr::read(&this.data);
+                // avoid calling Drop, we already dropped finalizer and "moved" data
+                mem::forget(this);
+                Ok(data)
+            },
+            Err(arc) => {
+                this.inner = Some(arc);
+                Err(this)
+            }
+        }
+    }
 }
 
 impl<T, F> FinArc<T, F>
@@ -109,6 +151,30 @@ mod test {
         let arc = FinArc::new(data, |data| data.close());
         let arc_clone = arc.clone();
         drop(arc);
+        assert_eq!(close_counter.load(Ordering::SeqCst), 0);
+        drop(arc_clone);
+        assert_eq!(close_counter.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn try_unwrap_doesnt_call_drop() {
+        #[derive(Clone)]
+        struct ManuallyClosable<'a>(&'a AtomicUsize);
+        impl ManuallyClosable<'_> {
+            fn close(&mut self) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        let close_counter = AtomicUsize::new(0);
+        let data = ManuallyClosable(&close_counter);
+        let arc = FinArc::new(data, |data| data.close());
+        assert!(FinArc::try_unwrap(arc).is_ok());
+        assert_eq!(close_counter.load(Ordering::SeqCst), 0);
+
+        let data = ManuallyClosable(&close_counter);
+        let arc = FinArc::new(data, |data| data.close());
+        let arc_clone = arc.clone();
+        assert!(FinArc::try_unwrap(arc).is_err());
         assert_eq!(close_counter.load(Ordering::SeqCst), 0);
         drop(arc_clone);
         assert_eq!(close_counter.load(Ordering::SeqCst), 1);
